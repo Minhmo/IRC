@@ -1,6 +1,7 @@
-import threading 
+from threading import *
+from time import *
 import socket
-import sys
+from sys import stdout  
 import logging
 from enum import Enum
 import datetime
@@ -21,34 +22,34 @@ ErrorCodes = Enum(
 )
 
 
-#This thread doesn't stop correctly (I'll fix it later)
-class Worker(threading.Thread):
-    def __init__(self):
-        threading.Thread.__init__(self)
-    def run(self):
-        readbuffer = ''
-        while 1:
-            data = client.connection.recv(4096)
-           
-            if data.find('PING') != -1: #Server periodically checks if client is ALIVE
-                client.connection.send('PONG ' + data.split()[1] + '\r\n')
-            elif data.find('PRIVMSG') != -1:
-                nick = data.split('!')[0] + ':'
-                message = nick[1:] + ':'.join(data.split(':')[2:])
-                print(message)
-            elif data.find('322') != -1:
-                channel_string = ''
-                #print(data)
-                channels = data.split('322')
-                for channel in channels:
-                    if(channel.find('#') != -1):
-                        channel_string = '#' + (channel.split('#')[1])
-                        print(channel_string)
-            elif data.find('NOTICE') != -1:
-                print(data)
-            elif not data:
-                print("Connection closed") 
-
+def readFromSocket(socket):
+    readbuffer = ''
+    while 1:
+        data = socket.recv(4096)
+        stdout.write(data)
+        if data.find('PING') != -1: #Server periodically checks if client is ALIVE
+            socket.send('PONG ' + data.split()[1] + '\r\n')
+        elif data.find('PRIVMSG') != -1:
+            stdout.write(data)
+            nick = data.split('!')[0] + ':'
+            message = '<' + data.split(' ')[2] + '>' + nick[1:] + ':'.join(data.split(':')[2:])
+            stdout.write(message)
+        elif data.find('322') != -1:
+            channel_string = ''
+            #print(data)
+            channels = data.split('322')
+            for channel in channels:
+                if(channel.find('#') != -1):
+                    channel_string = '#' + (channel.split('#')[1])
+                    stdout.write(channel_string)
+        elif data.find('NOTICE') != -1:
+            stdout.write(data)
+        elif not data:
+            print("Connection closed")
+            return
+        else :
+            stdout.write(data)
+                
 class Client(object):
 
     DEFAULT_PORT = 6667
@@ -59,7 +60,7 @@ class Client(object):
         self.host = host
         self.port = port
         self.connection = self.get_connection()
-        self.channel = '' #Not sure if this belongs here 
+        self.channel = '' #Not sure if this belongs here
         
     def set_channel(self, channel):
         self.channel = channel
@@ -109,24 +110,56 @@ client = Client(username, host, port)
 client.connection_registration()
 
 #Initiate worker thread
-worker = Worker()
-worker.Daemon = True
-worker.start()
+worker = Thread(target = readFromSocket, args=(client.connection,))
+worker.daemon = True;
+worker.start();
 
 command = ''
-while command != '/stop':
-    command = raw_input()
-    if command == '/help':
-        print('This is help statement')
-    elif command == '/list':
-        send_message('LIST\r\n',client.connection)
-    elif command == '/stop':
-        worker.join()
-    elif command.find('/join') != -1:
-        params = command.split(' ')
-        send_message('JOIN ' + params[1] + '\r\n',client.connection)
-        client.set_channel(params[1])#This is a workaround
-    elif command[0] == '/':
-        print('Uknown command')
-    else:
-        send_message('PRIVMSG ' + client.channel + ' :' + command +'\r\n',client.connection)
+try:
+    while command != '/stop':
+        command = raw_input(client.user_name + ': ')
+        if command == '/help':
+            print('This is help statement')
+        elif command.find('/connect') != -1:
+            send_message('QUIT\r\n',client.connection)
+            worker.join(timeout = 0.1)
+            params = command.split()
+            client = Client(params[1], params[2], int(params[3]))
+            client.connection_registration();
+            worker = Thread(target = readFromSocket, args=(client.connection,))
+            worker.daemon = True;
+            worker.start();
+            
+        elif command == '/list':
+            send_message('LIST\r\n',client.connection)
+            
+        elif command.find('/join') != -1:
+            params = command.split(' ')
+            send_message('PART ' + client.channel + '\r\n',client.connection)
+            send_message('JOIN ' + params[1] + '\r\n',client.connection)
+            client.set_channel(params[1])#This is a workaround
+            
+        elif command.find('/names') != -1:
+            params_string = ' '.join(command.split(' ')[1:])
+            send_message('NAMES ' + params_string + '\r\n',client.connection);
+            
+        elif command.find('/msg') != -1:
+            send_message('PRIVMSG ' + params[1] + ' :' + ' '.join(command.split(' ')[1:]) + '\r\n',client.connection)
+            
+        elif command.find('/nick') != -1:
+            send_message('NICK ' + command.split(' ')[1] + '\r\n',client.connection)
+            
+        elif command.find('/invite') != -1:
+            send_message('INVITE ' + ' '.join(command.split(' ')[1:]) + '\r\n',client.connection)
+            
+        elif command.find('/quit') != -1:
+            print("Leaving server...")
+            send_message('QUIT\r\n',client.connection)
+            worker.join(timeout = 0.1)
+        elif not command:
+            pass
+        else:
+            print(client.channel)
+            send_message('PRIVMSG ' + client.channel + ' :' + command +'\r\n',client.connection)
+except Exception as e: 
+    print(e)
